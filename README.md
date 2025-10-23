@@ -4,6 +4,7 @@ Author: Yanbing Wang
 
 The goal of this project is to predict the travel time on I-10 given historical traffic data and (near) real-time work zone schedules and incident information.
 
+
 ### Questions
 - How to predict short-term (30 sec to 5 min) traffic (speed on each road segment) on a freeway corridor, given historical traffic speed data?
 - How do planned (e.g., work zones) and unplanned (e.g., crashes) events affect short-term traffic delay? 
@@ -14,57 +15,101 @@ The goal of this project is to predict the travel time on I-10 given historical 
 ![Work Zone Dashboard](images/i10_broadway_curve.png)
 *Matched events to the nearest TMC segment per direction*
 
+## Quick Start
+
+Run the pipeline end-to-end with these scripts. Each command shows where outputs are written.
+
+1) Prepare the dataset (events + INRIX -> parquet), save training data to `database/i10-broadway/X_full_1h.parquet` – final feature table with MultiIndex (tmc_code, time_bin)
+
+```bash
+python prepare_i10_training_data.py 
+```
+
+
+2) Train tabular baselines (Linear/Ridge/Lasso, RF/GBRT, XGBoost), save models to `models/tabular_run`
+
+```bash
+python train_model_tabular.py --save-models
+```
+
+3) Train LSTM (sequence model), save to `models/lstm_run`
+
+```bash
+python train_model_lstm.py --save-models
+```
+
+4) Train ST‑GNN (GCN + LSTM), save to `models/gcn/gcn_lstm_i10_wb`
+
+```bash
+python train_model_stgnn.py 
+```
+
+5) Compare models and generate figures, save to images/
+
+```bash
+python model_comparison.py --direction WB --save-figs --skip-heatmaps
+```
+
 ## Model Choices
 ### Model Overview
 | Model Family | Description | Training Data
 |----------|-------------|-------------|
 | **Linear Regression** | Ordinary Least Squares (OLS), Ridge and Lasso. Assume linear relationships between events, time features, and travel time. No interaction terms. No spatial or temporal dependency.| Event-balanced data points[^1] |
-| **Tree-Based Models** | Random Forest, Gradient Boosted Trees and XGBoost. Captures nonlinearities and interactions, No spatial or temporal dependency.|Event-balanced data points[^1] |
+| **Tree-Based Models** | Random Forest (rf), Gradient Boosted Regression Trees (gbrf) and XGBoost. Captures nonlinearities and interactions, No spatial or temporal dependency.|Event-balanced data points[^1] |
 | **SARIMAX Models** | Seasonal ARIMA with Exogenous Regressors. Models serial dependence and seasonality directly, trained independently for each TMC. Computationally heavy. Consider temporal but no spatial dependency. | Full time-series for each TMC |
 | **LSTM** | A recurrent neural network for time-series prediction. A global (pooled) model trained on all TMC time-series sliced into short 24-hr sequences. Consider temporal but no spatial dependency.| Sliced short sequences across all TMCs |
+| **GCN-LSTM** | A spatial-temporal graph neural network (ST-GNN) model. GCN captures spatial dependencies between conneted TMCs, and LSTM learns temporal dynamics| Sliced short sequences across all TMCs |
 
 [^1]: The training data is a multi-index DataFrame with indices {tmc, time_bin}, where events are counted at each entry. Since events occur in less than 1% of 1-hr time bins, we downsample non-event entries to achieve approximately 50% event balance in the training data.
 
 ### Regressor (Features) Selection
 | Features | Description | Applies To |
 |----------|-------------|-------------|
-| **Base**  `(miles, on/off ramps, curve)`| Static features related to road geometry each TMC | Linear, Tree, SARIMAX(exog)|
-| **Events (evt)**  `(evt_cat_planned, evt_cat_unplanned)`| Counts or presence of planned events (closures, roadwork, etc.) and unplanned events (crashes, debris, accidents etc.)|Linear, Tree, SARIMAX(exog)|
-|**Cyclic time (cyc)** `(hour_sin, hour_cos, dow_sin, dow_cos, hour_of_week_sin, hour_of_week_cos, is_weekend)`|Encodes daily & weekly periodicity| Linear, Tree, SARIMAX(exog)|
+| **Road**  `(miles, on/off ramps, curve)`| Static features related to road geometry each TMC | All models|
+| **Events (evt)**  `(evt_cat_planned, evt_cat_unplanned)`| Counts or presence of planned events (closures, roadwork, etc.) and unplanned events (crashes, debris, accidents etc.)|All models|
+|**Cyclic time (cyc)** `(hour_sin, hour_cos, dow_sin, dow_cos, hour_of_week_sin, hour_of_week_cos, is_weekend)`|Encodes daily & weekly periodicity|All models|
 |**Lags (lags)** `(travel_time_t-1, t-2,...)`|Captures short-term persistence|All models except for SARIMAX|
 |**Seasonality** `(P,D,Q,s)`|Explicit periodic autocorrelation|SARIMAX only|
 
 
 ## Training Results
 For each model family, various regressor combinations were tested. The configurations include:
-1. base features only
-2. base + evt
-3. base + evt + lag 
-4. base + lag 
-5. base + cyc
-6. base + cyc + lag
-7. full features: base + cyc + evt + lag
+1. road features only
+2. road + evt
+3. road + evt + lag 
+4. road + lag 
+5. road + cyc
+6. road + cyc + lag
+7. full features: road + cyc + evt + lag
+
+![true](images/tabular_models_cv_rmse.png)
+
+*Quick model comparison by CV RMSE*: adding "lags" feature improved the accuracy for all models; "XGBoost" is the overall best model
+
+![true](images/full_feature_models_cv_rmse.png)
+
+*Full-feature model comparison by test RMSE*: LSTM has the best prediction accuracy, followed by XGBoost.
 
 The following shows the model prediction results using "full" features for each model family.
-![true](images/travel-time-heatmap-true.png)
+![true](images/heatmap_truth_WB.png)
 *True travel time heatmap*
 
-![lr](images/heatmap-ridge-full.png)
-*Linear Regression (Ridge) with full features*
+![lr](images/heatmap_lr_full_WB.png)
+*Linear Regression with full features*
 
-![gbrt](images/heatmap-gbrt-full.png)
+![gbrt](images/heatmap_gbrt_full_WB.png)
 *Gradient boosted tree with full features*
 
-![xgb](images/heatmap-xgb-full.png)
+![xgb](images/heatmap_xgb_full_WB.png)
 *XGBoost model with full features*
 
-<!-- ![lstm](images/lstm_full.png)
-*LSTM model with full features* -->
+![lstm](images_old/heatmap-lstm-full.png)
+*LSTM model with full features*
 
 <!-- ![sarimax](images/sarimax_full.png)
 *SARIMAX model with full features* -->
 
-![gcn](images/heatmap-gcn-full.png)
+![gcn](images/heatmap_gcn_WB.png)
 *GCN-LSTM predicted travel time heatmap*
 
 
@@ -192,9 +237,40 @@ tmc_code	measurement_tstamp	speed	historical_average_speed	reference_speed	trave
 1	115+04387	2024-09-24 00:01:00	52.0	49.0	49.0	10.77	30.0	100.0	2	6
 2	115+04387	2024-09-24 00:02:00	51.0	49.0	49.0	10.98	30.0	100.0	2	6
 3	115+04387	2024-09-24 00:03:00	51.0	49.0	49.0	10.98	30.0	100.0	2	6
-4	115+04387	2024-09-24 00:04:00	51.0	49.0	49.0	10.9
 ```
 The downloaded data covers Interstate I‑17 and I‑10, SR60, and Loop 101 in the Phoenix, Tempe, Chandler, Mesa, and Gilbert areas. It also covers all major arterials in Tempe. The time range spans from September 24, 2024, to September 23, 2025.
+
+### Prepare I‑10 Broadway training dataset (CLI)
+The refactored script `prepare_i10_training_data.py` builds the model-ready parquet by combining AZ511 events and INRIX speeds, assigning events to nearest TMCs, and engineering features.
+
+Usage:
+
+```bash
+python prepare_i10_training_data.py --help
+```
+
+Common run (uses defaults for I‑10 Broadway bounds and paths):
+
+```bash
+python prepare_i10_training_data.py \
+  --start 2025-06-16T00:00:00Z \
+  --end   2025-09-23T00:00:00Z \
+  --interval 1h \
+  --out-dir database/i10-broadway
+```
+
+Arguments (key ones):
+- --db-path: path to AZ511 SQLite (default: database/az511.db)
+- --tmc-csv: path to INRIX TMC_Identification.csv
+- --inrix-csv: path to INRIX speeds CSV
+- --start/--end: ISO timestamps (UTC)
+- --interval: aggregation window (e.g., 5min, 15min, 1h)
+- --lat/lon bounds: optional overrides for the Broadway Curve bbox
+- --no-intermediate: skip writing events/inrix/tmc parquet snapshots
+
+Outputs in out-dir:
+- events.parquet, inrix.parquet, tmc.parquet (unless --no-intermediate)
+- X_full_<interval>.parquet with MultiIndex (tmc_code, time_bin) and features
 
 ## Data Dashboard
 
