@@ -47,7 +47,12 @@ python train_model_stgnn.py
 5) Compare models and generate figures, save to images/
 
 ```bash
-python model_comparison.py --direction WB --save-figs --skip-heatmaps
+python model_comparison.py --direction WB --save-figs
+```
+6) Counterfactual analysis to estimate the impact of planned events on travel time, save to images/
+
+```bash
+python evt_impact_analysis.py
 ```
 
 ## Model Choices
@@ -56,9 +61,11 @@ python model_comparison.py --direction WB --save-figs --skip-heatmaps
 |----------|-------------|-------------|
 | **Linear Regression** | Ordinary Least Squares (OLS), Ridge and Lasso. Assume linear relationships between events, time features, and travel time. No interaction terms. No spatial or temporal dependency.| Event-balanced data points[^1] |
 | **Tree-Based Models** | Random Forest (rf), Gradient Boosted Regression Trees (gbrf) and XGBoost. Captures nonlinearities and interactions, No spatial or temporal dependency.|Event-balanced data points[^1] |
-| **SARIMAX Models** | Seasonal ARIMA with Exogenous Regressors. Models serial dependence and seasonality directly, trained independently for each TMC. Computationally heavy. Consider temporal but no spatial dependency. | Full time-series for each TMC |
 | **LSTM** | A recurrent neural network for time-series prediction. A global (pooled) model trained on all TMC time-series sliced into short 24-hr sequences. Consider temporal but no spatial dependency.| Sliced short sequences across all TMCs |
 | **GCN-LSTM** | A spatial-temporal graph neural network (ST-GNN) model. GCN captures spatial dependencies between conneted TMCs, and LSTM learns temporal dynamics| Sliced short sequences across all TMCs |
+<!-- | **SARIMAX Models** | Seasonal ARIMA with Exogenous Regressors. Models serial dependence and seasonality directly, trained independently for each TMC. Computationally heavy. Consider temporal but no spatial dependency. | Full time-series for each TMC | -->
+
+
 
 [^1]: The training data is a multi-index DataFrame with indices {tmc, time_bin}, where events are counted at each entry. Since events occur in less than 1% of 1-hr time bins, we downsample non-event entries to achieve approximately 50% event balance in the training data.
 
@@ -69,7 +76,7 @@ python model_comparison.py --direction WB --save-figs --skip-heatmaps
 | **Events (evt)**  `(evt_cat_planned, evt_cat_unplanned)`| Counts or presence of planned events (closures, roadwork, etc.) and unplanned events (crashes, debris, accidents etc.)|All models|
 |**Cyclic time (cyc)** `(hour_sin, hour_cos, dow_sin, dow_cos, hour_of_week_sin, hour_of_week_cos, is_weekend)`|Encodes daily & weekly periodicity|All models|
 |**Lags (lags)** `(travel_time_t-1, t-2,...)`|Captures short-term persistence|All models except for SARIMAX|
-|**Seasonality** `(P,D,Q,s)`|Explicit periodic autocorrelation|SARIMAX only|
+<!-- |**Seasonality** `(P,D,Q,s)`|Explicit periodic autocorrelation|SARIMAX only| -->
 
 
 ## Training Results
@@ -120,66 +127,9 @@ The following shows the model prediction results using "full" features for each 
 
 ## Feature Importance
 Preliminary and quantitative analyses show that lagged travel-time and cyclical time (hour/day) features dominate model performance, while event-related features contribute less. The ranking below is based on feature significance (p-values).
+![fi](images/xgb_full_feature_importance_nested_pie.png)
+*Feature importance identified by XGBoost*
 
-#### The top 10 important features for LR models are:
-|feature	|coef	|p_value	|t_stat|
-|-------|--------|---------|---------|
-|log_lag1_tt_per_mile	|3.444037	|1.056173e-92	|21.773481|
-|log_lag2_tt_per_mile	|-1.232298	|4.372261e-10	|-6.277715|
-|hour_cos	|-0.566244	|4.455911e-06	|-4.604132|
-|curve	|0.425215	|4.697505e-03	|2.830896|
-|reference_speed	|0.282690|6.401187e-02	|1.853329|
-|onramp|	-0.317958	|9.896550e-02	|-1.650812|
-|log_lag3_tt_per_mile	|0.253012	|1.310296e-01	|1.510798|
-|hour_sin	|0.159311	|2.472554e-01|	1.157448|
-|is_weekend	|-0.170429	|3.894714e-01	|-0.860801|
-|evt_cat_unplanned	|0.107559	|3.956972e-01	|0.849550|
-
-
-
-#### Random Forest
-
-|feature |	importance |
-|-------|-------------|
-|log_lag1_tt_per_mile	|0.598673|
-|log_lag2_tt_per_mile	|0.167083|
-|log_lag3_tt_per_mile	|0.118422|
-|hour_cos	|0.026258|
-|miles	|0.021463|
-|hour_of_week_sin	|0.016678|
-|hour_of_week_cos	|0.013536|
-|hour_sin	|0.010765|
-|dow_sin	|0.006311|
-|reference_speed	|0.004457|
-
-#### Gradient boosted regression trees (GBRT)
-|feature |	importance |
-|-------|-------------|
-|log_lag1_tt_per_mile	|0.584466|
-|log_lag3_tt_per_mile	|0.091125|
-|hour_cos	|0.054218|
-|log_lag2_tt_per_mile	|0.039154|
-|hour_of_week_sin	|0.033247|
-|hour_sin	|0.019954|
-|reference_speed		|0.012360|
-|hour_of_week_cos	|0.011678|
-|miles		|0.008140|
-|evt_cat_unplanned	|0.004216|
-
-
-#### XGBoost:
-|feature |	importance |
-|-------|-------------|
-log_lag1_tt_per_mile	|0.302974
-log_lag2_tt_per_mile	|0.146063
-hour_cos	|0.080227
-reference_speed	|0.063320
-offramp	|0.060669
-log_lag3_tt_per_mile	|0.056196
-evt_cat_planned	|0.047618
-dow_sin	|0.046490
-hour_of_week_sin	|0.044603
-hour_sin	|0.040173
 
 
 
@@ -240,37 +190,6 @@ tmc_code	measurement_tstamp	speed	historical_average_speed	reference_speed	trave
 ```
 The downloaded data covers Interstate I‑17 and I‑10, SR60, and Loop 101 in the Phoenix, Tempe, Chandler, Mesa, and Gilbert areas. It also covers all major arterials in Tempe. The time range spans from September 24, 2024, to September 23, 2025.
 
-### Prepare I‑10 Broadway training dataset (CLI)
-The refactored script `prepare_i10_training_data.py` builds the model-ready parquet by combining AZ511 events and INRIX speeds, assigning events to nearest TMCs, and engineering features.
-
-Usage:
-
-```bash
-python prepare_i10_training_data.py --help
-```
-
-Common run (uses defaults for I‑10 Broadway bounds and paths):
-
-```bash
-python prepare_i10_training_data.py \
-  --start 2025-06-16T00:00:00Z \
-  --end   2025-09-23T00:00:00Z \
-  --interval 1h \
-  --out-dir database/i10-broadway
-```
-
-Arguments (key ones):
-- --db-path: path to AZ511 SQLite (default: database/az511.db)
-- --tmc-csv: path to INRIX TMC_Identification.csv
-- --inrix-csv: path to INRIX speeds CSV
-- --start/--end: ISO timestamps (UTC)
-- --interval: aggregation window (e.g., 5min, 15min, 1h)
-- --lat/lon bounds: optional overrides for the Broadway Curve bbox
-- --no-intermediate: skip writing events/inrix/tmc parquet snapshots
-
-Outputs in out-dir:
-- events.parquet, inrix.parquet, tmc.parquet (unless --no-intermediate)
-- X_full_<interval>.parquet with MultiIndex (tmc_code, time_bin) and features
 
 ## Data Dashboard
 
@@ -328,7 +247,6 @@ wzdx/
 ├── environment.yml              # Conda environment specification
 ├── requirements.txt             # Python dependencies (pip)
 ├── run_az511.sh                 # Shell script to run AZ511 job
-├── start.sh                     # Convenience startup script
 ├── README.md                    # Project documentation
 ├── _log/                        # Logs from data collection
 │   └── az511_28538440.err
@@ -342,7 +260,6 @@ wzdx/
 │   ├── wzdx.py                  # Work zone data processing script
 │   ├── i10-broadway/            # Training data preparation on I-10 broadway curve
 │   │   ├── X_tensor_1h.npz
-│   │   └── X_tensor_5min.npz
 │   └── inrix-traffic-speed/
 │       └── I10-and-I17-1year/
 │           ├── Contents.txt
@@ -350,19 +267,53 @@ wzdx/
 │           └── TMC_Identification.csv
 ├── images/                      # Figures for README and dashboards
 ├── models/                      # Model training output
-└── notebooks/                   # EDA and adhoc scripts
-  ├── eda_i10.ipynb
-  ├── eda_inrix.ipynb
-  ├── eda_wzdx.ipynb
-  ├── i10_lstm.ipynb
-  ├── i10_model_comparison.ipynb
-  ├── i10_sarimax.py
-  ├── i10_train_lr_tree.ipynb
-  ├── i10_train_time_series.ipynb
-  └── i10_training_data.ipynb
+│   └── gcn/                     # Training results for GCN-LSTM
+│   └── lstm_run/                # Training results for LSTM
+│   └── tabular_run/             # Training results for LR and Tree-based models using tabular data
+├── notebooks/                   # EDA and adhoc scripts
+├── src/                         # Generic helper utilities
+├── evt_impact_analysis.py
+├── model_comparison.py
+├── prepare_i10_training_data.py
+├── train_model_lstm.py
+├── train_model_stgnn.py
+└── train_model_tabular.py
 ```
 
+## Data Access
+
+This project uses a combination of proprietary and public datasets:
+
+- **INRIX data** — Licensed and proprietary. The raw data cannot be shared due to contractual restrictions.  
+  However, **processed and aggregated training data** (e.g., anonymized feature tables, model inputs, or summary statistics) can be shared upon reasonable request.  
+
+- **AZ511 data** — Publicly available through the [Arizona Department of Transportation (ADOT) 511 API](https://www.az511.com/).  
+  You can access it directly by registering for an API key or using their open endpoints.
+
+Processed datasets and derived features included in this repository are shared under the same license as the code (MIT), unless otherwise noted.
+
+For questions or data-sharing inquiries, please contact
+**Yanbing Wang** 
 
 ## License
-
 MIT License
+
+Copyright (c) 2025 Yanbing Wang
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.

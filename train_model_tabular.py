@@ -56,93 +56,60 @@ from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
 from sklearn.model_selection import cross_val_score
 from sklearn.metrics import mean_absolute_error, r2_score, root_mean_squared_error
 
-try:
-    from xgboost import XGBRegressor  # type: ignore
-    XGB_AVAILABLE = True
-except Exception:
-    XGB_AVAILABLE = False
+# XGBoost availability handled in src.utils
 
 import joblib
+try:
+    import matplotlib.pyplot as plt  # type: ignore
+    MPL_AVAILABLE = True
+except Exception:
+    MPL_AVAILABLE = False
 
-# ===============
-# Helper utils
-# ===============
+# Import shared helpers
+try:
+    from src.utils import (
+        log,
+        ensure_output_dir,
+        load_dataset,
+        attach_time_index,
+        preprocess,
+        time_split,
+        balance_training,
+        get_feature_names,
+        extract_linear_feature_importance,
+        extract_tree_feature_importance,
+        extract_tree_feature_importance,
+        make_preprocessor,
+        make_model,
+        make_rf,
+        make_gbrt,
+        make_xgb,
+        XGB_AVAILABLE,
+    )
+except Exception:
+    # Fallback: ensure project root is on sys.path when run from subfolders
+    root_dir = Path(__file__).resolve().parent
+    if str(root_dir) not in sys.path:
+        sys.path.insert(0, str(root_dir))
+    from src.utils import (
+        log,
+        ensure_output_dir,
+        load_dataset,
+        attach_time_index,
+        preprocess,
+        time_split,
+        balance_training,
+        get_feature_names,
+        extract_linear_feature_importance,
+        extract_tree_feature_importance,
+        make_preprocessor,
+        make_model,
+        make_rf,
+        make_gbrt,
+        make_xgb,
+        XGB_AVAILABLE,
+    )
 
-def log(s: str) -> None:
-    ts = time.strftime("%Y-%m-%d %H:%M:%S")
-    print(f"[{ts}] {s}")
-
-
-def ensure_output_dir(path: Path) -> None:
-    path.mkdir(parents=True, exist_ok=True)
-
-
-# ===============
-# Data handling
-# ===============
-
-def load_dataset(data_path: Path) -> pd.DataFrame:
-    if not data_path.exists():
-        raise FileNotFoundError(f"Data file not found: {data_path}")
-    log(f"Loading dataset: {data_path}")
-    df = pd.read_parquet(data_path)
-    log(f"Loaded shape: {getattr(df, 'shape', None)}")
-    return df
-
-
-def attach_time_index(df: pd.DataFrame, time_col: str = "time_bin") -> pd.DataFrame:
-    """Ensure we can split chronologically by time.
-    Accepts either a MultiIndex with level 'time_bin' or a column named 'time_bin'.
-    """
-    if isinstance(df.index, pd.MultiIndex) and time_col in df.index.names:
-        return df
-    # If it's a column, set as second-level index with any existing index as first.
-    if time_col in df.columns:
-        if df.index.name is None:
-            df = df.set_index([df.index.rename("row_id"), time_col]).sort_index()
-        else:
-            df = df.set_index([df.index, time_col]).sort_index()
-        return df
-    raise KeyError(
-        f"Expected '{time_col}' either as an index level or a column for chronological split.")
-
-
-def preprocess(df: pd.DataFrame) -> pd.DataFrame:
-    # Create log transforms of existing lag features if present
-    for base in ["tt_per_mile", "lag1_tt_per_mile", "lag2_tt_per_mile", "lag3_tt_per_mile"]:
-        if base in df.columns:
-            out = f"log_{base}"
-            if out not in df.columns:
-                df[out] = np.log(df[base].astype(float) + 1e-6)
-    return df
-
-
-def time_split(df: pd.DataFrame, test_ratio: float = 0.2, time_level: str = "time_bin") -> Tuple[pd.DataFrame, pd.DataFrame]:
-    time_bins = df.index.get_level_values(time_level).unique().sort_values()
-    split_idx = int(len(time_bins) * (1 - test_ratio))
-    train_times = time_bins[:split_idx]
-    test_times = time_bins[split_idx:]
-    df_train = df.loc[pd.IndexSlice[:, train_times], :]
-    df_test = df.loc[pd.IndexSlice[:, test_times], :]
-    return df_train, df_test
-
-
-def balance_training(df_train: pd.DataFrame, event_col: str = "evt_total", negative_frac: float = 0.01, seed: int = 42) -> pd.DataFrame:
-    if event_col not in df_train.columns:
-        log(f"Warning: event_col '{event_col}' not in data. Skipping balancing.")
-        return df_train.sample(frac=1.0, random_state=seed).reset_index(drop=True)
-    any_event = df_train[event_col] > 0
-    df_events = df_train[any_event]
-    df_no_events = df_train[~any_event]
-    # Downsample negatives
-    frac = float(negative_frac)
-    if frac <= 0 or frac >= 1:
-        neg_sample = df_no_events
-    else:
-        neg_sample = df_no_events.sample(frac=frac, random_state=seed) if len(df_no_events) else df_no_events
-    df_balanced = pd.concat([df_events, neg_sample], axis=0)
-    log(f"Balanced train: events={len(df_events):,}, non-events(sampled)={len(neg_sample):,}, total={len(df_balanced):,}")
-    return df_balanced.sample(frac=1.0, random_state=seed).reset_index(drop=True)
 
 
 # ===============
@@ -150,87 +117,24 @@ def balance_training(df_train: pd.DataFrame, event_col: str = "evt_total", negat
 # ===============
 
 def feature_config() -> Dict[str, List[str]]:
-    time_features = [
+    cyc_features = [
         'hour_sin', 'hour_cos', 'dow_sin', 'dow_cos',
         'hour_of_week_sin', 'hour_of_week_cos', 'is_weekend'
     ]
     evt_features = ['evt_cat_unplanned', 'evt_cat_planned']
     lag_features = ['log_lag1_tt_per_mile', 'log_lag2_tt_per_mile', 'log_lag3_tt_per_mile']
-    tmc_features = ['miles', 'reference_speed', 'curve', 'onramp', 'offramp']
-    full_features = time_features + evt_features + lag_features + tmc_features
+    road_features = ['miles', 'reference_speed', 'curve', 'onramp', 'offramp']
+    full_features = cyc_features + evt_features + lag_features + road_features
     return {
-        "time": time_features,
+        "cyc": cyc_features,
         "evt": evt_features,
         "lag": lag_features,
-        "tmc": tmc_features,
+        "road": road_features,
         "full": full_features,
     }
 
 
-def make_preprocessor(features: List[str], scale: bool = True) -> ColumnTransformer:
-    if scale:
-        return ColumnTransformer([
-            ('num', StandardScaler(with_mean=False), features)
-        ], remainder='drop')
-    return ColumnTransformer([
-        ('num', 'passthrough', features)
-    ], remainder='drop')
-
-
-def make_model(preprocessor: ColumnTransformer, regressor, transform_target: bool = True) -> TransformedTargetRegressor | Pipeline:
-    pipe = Pipeline([
-        ('pre', preprocessor),
-        ('reg', regressor)
-    ])
-    if transform_target:
-        log_transformer = FunctionTransformer(np.log1p, inverse_func=np.expm1, validate=False)
-        return TransformedTargetRegressor(regressor=pipe, transformer=log_transformer)
-    return pipe
-
-
-def make_rf(**kwargs) -> RandomForestRegressor:
-    # Hyperparameters tuned for tabular travel-time prediction
-    return RandomForestRegressor(
-        n_estimators=300,
-        max_depth=12,
-        min_samples_leaf=5,
-        n_jobs=-1,
-        random_state=kwargs.pop('random_state', 42),
-        **kwargs
-    )
-
-
-def make_gbrt(**kwargs) -> GradientBoostingRegressor:
-    # hyperparameters tuned for tabular travel-time prediction
-    return GradientBoostingRegressor(
-        n_estimators=500,
-        learning_rate=0.05,
-        max_depth=3,
-        random_state=kwargs.pop('random_state', 42),
-        **kwargs
-    )
-
-
-def make_xgb(**kwargs):
-    """hyperparameters tuned for tabular travel-time prediction"""
-    if not XGB_AVAILABLE:
-        raise RuntimeError("xgboost is not available")
-    params = dict(
-        n_estimators=400,
-        learning_rate=0.05,
-        max_depth=5,
-        subsample=0.7,
-        colsample_bytree=0.9,
-        reg_lambda=0.3,
-        reg_alpha=0.5,
-        min_child_weight=20,
-        n_jobs=-1,
-        tree_method='hist',  # faster for large datasets
-        objective='reg:squarederror',
-        random_state=kwargs.pop('random_state', 42),
-    )
-    params.update(kwargs)
-    return XGBRegressor(**params)
+# moved: make_preprocessor, make_model, make_rf, make_gbrt, make_xgb -> src.utils
 
 
 def build_models(groups: List[str], features: Dict[str, List[str]], transform_target: bool = True, fast: bool = False) -> Dict[str, object]:
@@ -244,13 +148,13 @@ def build_models(groups: List[str], features: Dict[str, List[str]], transform_ta
             }
         else:
             variants = {
-                'lr_base':       make_model(make_preprocessor(features['tmc']), LinearRegression(), transform_target),
-                'lr_base_lags':  make_model(make_preprocessor(features['tmc'] + features['lag']), LinearRegression(), transform_target),
+                'lr_base':       make_model(make_preprocessor(features['road']), LinearRegression(), transform_target),
+                'lr_base_lags':  make_model(make_preprocessor(features['road'] + features['lag']), LinearRegression(), transform_target),
                 'lr_full':       make_model(make_preprocessor(features['full']), LinearRegression(), transform_target),
-                'lr_cyc':        make_model(make_preprocessor(features['time'] + features['tmc']), LinearRegression(), transform_target),
-                'lr_cyc_lags':   make_model(make_preprocessor(features['time'] + features['tmc'] + features['lag']), LinearRegression(), transform_target),
-                'lr_evt':        make_model(make_preprocessor(features['evt'] + features['tmc']), LinearRegression(), transform_target),
-                'lr_evt_lags':   make_model(make_preprocessor(features['evt'] + features['tmc'] + features['lag']), LinearRegression(), transform_target),
+                'lr_cyc':        make_model(make_preprocessor(features['cyc'] + features['road']), LinearRegression(), transform_target),
+                'lr_cyc_lags':   make_model(make_preprocessor(features['cyc'] + features['road'] + features['lag']), LinearRegression(), transform_target),
+                'lr_evt':        make_model(make_preprocessor(features['evt'] + features['road']), LinearRegression(), transform_target),
+                'lr_evt_lags':   make_model(make_preprocessor(features['evt'] + features['road'] + features['lag']), LinearRegression(), transform_target),
                 'ridge_full':    make_model(make_preprocessor(features['full']), Ridge(alpha=1.0), transform_target),
                 'lasso_full':    make_model(make_preprocessor(features['full']), Lasso(alpha=0.01), transform_target),
             }
@@ -265,19 +169,19 @@ def build_models(groups: List[str], features: Dict[str, List[str]], transform_ta
             }
         else:
             variants = {
-                'rf_base':       make_model(make_preprocessor(features['tmc'], scale=False), make_rf()),
-                'rf_base_lags':  make_model(make_preprocessor(features['tmc'] + features['lag'], scale=False), make_rf()),
-                'rf_cyc':        make_model(make_preprocessor(features['time'] + features['tmc'], scale=False), make_rf()),
-                'rf_cyc_lags':   make_model(make_preprocessor(features['time'] + features['tmc'] + features['lag'], scale=False), make_rf()),
-                'rf_evt':        make_model(make_preprocessor(features['evt'] + features['tmc'], scale=False), make_rf()),
-                'rf_evt_lags':   make_model(make_preprocessor(features['evt'] + features['tmc'] + features['lag'], scale=False), make_rf()),
+                'rf_base':       make_model(make_preprocessor(features['road'], scale=False), make_rf()),
+                'rf_base_lags':  make_model(make_preprocessor(features['road'] + features['lag'], scale=False), make_rf()),
+                'rf_cyc':        make_model(make_preprocessor(features['cyc'] + features['road'], scale=False), make_rf()),
+                'rf_cyc_lags':   make_model(make_preprocessor(features['cyc'] + features['road'] + features['lag'], scale=False), make_rf()),
+                'rf_evt':        make_model(make_preprocessor(features['evt'] + features['road'], scale=False), make_rf()),
+                'rf_evt_lags':   make_model(make_preprocessor(features['evt'] + features['road'] + features['lag'], scale=False), make_rf()),
                 'rf_full':       make_model(make_preprocessor(features['full'], scale=False), make_rf()),
-                'gbrt_base':     make_model(make_preprocessor(features['tmc'], scale=False), make_gbrt()),
-                'gbrt_base_lags': make_model(make_preprocessor(features['tmc'] + features['lag'], scale=False), make_gbrt()),
-                'gbrt_cyc':      make_model(make_preprocessor(features['time'] + features['tmc'], scale=False), make_gbrt()),
-                'gbrt_cyc_lags': make_model(make_preprocessor(features['time'] + features['tmc'] + features['lag'], scale=False), make_gbrt()),
-                'gbrt_evt':      make_model(make_preprocessor(features['evt'] + features['tmc'], scale=False), make_gbrt()),
-                'gbrt_evt_lags': make_model(make_preprocessor(features['evt'] + features['tmc'] + features['lag'], scale=False), make_gbrt()),
+                'gbrt_base':     make_model(make_preprocessor(features['road'], scale=False), make_gbrt()),
+                'gbrt_base_lags': make_model(make_preprocessor(features['road'] + features['lag'], scale=False), make_gbrt()),
+                'gbrt_cyc':      make_model(make_preprocessor(features['cyc'] + features['road'], scale=False), make_gbrt()),
+                'gbrt_cyc_lags': make_model(make_preprocessor(features['cyc'] + features['road'] + features['lag'], scale=False), make_gbrt()),
+                'gbrt_evt':      make_model(make_preprocessor(features['evt'] + features['road'], scale=False), make_gbrt()),
+                'gbrt_evt_lags': make_model(make_preprocessor(features['evt'] + features['road'] + features['lag'], scale=False), make_gbrt()),
                 'gbrt_full':     make_model(make_preprocessor(features['full'], scale=False), make_gbrt()),
             }
         models.update(variants)
@@ -290,12 +194,12 @@ def build_models(groups: List[str], features: Dict[str, List[str]], transform_ta
             }
         else:
             variants = {
-                'xgb_base':      make_model(make_preprocessor(features['tmc'], scale=False), make_xgb()),
-                'xgb_base_lags': make_model(make_preprocessor(features['tmc'] + features['lag'], scale=False), make_xgb()),
-                'xgb_cyc':       make_model(make_preprocessor(features['time'] + features['tmc'], scale=False), make_xgb()),
-                'xgb_cyc_lags':  make_model(make_preprocessor(features['time'] + features['tmc'] + features['lag'], scale=False), make_xgb()),
-                'xgb_evt':       make_model(make_preprocessor(features['evt'] + features['tmc'], scale=False), make_xgb()),
-                'xgb_evt_lags':  make_model(make_preprocessor(features['evt'] + features['tmc'] + features['lag'], scale=False), make_xgb()),
+                'xgb_base':      make_model(make_preprocessor(features['road'], scale=False), make_xgb()),
+                'xgb_base_lags': make_model(make_preprocessor(features['road'] + features['lag'], scale=False), make_xgb()),
+                'xgb_cyc':       make_model(make_preprocessor(features['cyc'] + features['road'], scale=False), make_xgb()),
+                'xgb_cyc_lags':  make_model(make_preprocessor(features['cyc'] + features['road'] + features['lag'], scale=False), make_xgb()),
+                'xgb_evt':       make_model(make_preprocessor(features['evt'] + features['road'], scale=False), make_xgb()),
+                'xgb_evt_lags':  make_model(make_preprocessor(features['evt'] + features['road'] + features['lag'], scale=False), make_xgb()),
                 'xgb_full':      make_model(make_preprocessor(features['full'], scale=False), make_xgb()),
             }
         models.update(variants)
@@ -400,6 +304,148 @@ def get_feature_names(model) -> Optional[List[str]]:
         return None
 
 
+def save_xgb_full_pie(models: Dict[str, object], feats: Dict[str, List[str]], output_dir: Path) -> None:
+    """Compute xgb_full feature importances and visualize as a nested (group + feature) pie using matplotlib.
+
+    - Outer ring: feature groups ('cyc', 'evt', 'lag', 'road', 'other')
+    - Inner ring: sub-features, colored using shades from tab20c clusters
+    - Saves PNG + CSVs
+    """
+    if 'xgb_full' not in models:
+        log("xgb_full not available in current models; skipping pie chart.")
+        return
+    if not MPL_AVAILABLE:
+        log("matplotlib not available; skipping pie chart.")
+        return
+
+    try:
+        model = models['xgb_full']
+        pipe = model.regressor_  # type: ignore[attr-defined]
+        reg = pipe.named_steps['reg']
+        importances = getattr(reg, 'feature_importances_', None)
+        if importances is None:
+            log("No feature_importances_ found on xgb_full; skipping pie chart.")
+            return
+
+        feat_names = get_feature_names(model) or feats.get('full', [])
+        n = min(len(importances), len(feat_names))
+        if n == 0:
+            log("Empty features or importances for xgb_full; skipping pie chart.")
+            return
+
+        feat_names = feat_names[:n]
+        importances = np.asarray(importances[:n], dtype=float)
+
+        # Map features to groups
+        group_map = {f: g for g in ['cyc', 'evt', 'lag', 'road'] for f in feats.get(g, [])}
+        df = pd.DataFrame({
+            'feature': feat_names,
+            'importance': importances,
+            'group': [group_map.get(f, 'other') for f in feat_names]
+        })
+        df = df[df['importance'] > 0]
+        if df.empty:
+            log("All importances are zero; skipping pie chart.")
+            return
+
+        # Normalize
+        df['importance'] = df['importance'] / df['importance'].sum()
+
+        # Save CSVs
+        output_dir.mkdir(parents=True, exist_ok=True)
+        df.to_csv(output_dir / 'xgb_full_feature_importance_detailed.csv', index=False)
+        df_group = df.groupby('group', as_index=False)['importance'].sum()
+        df_group.to_csv(output_dir / 'xgb_full_feature_importance_by_group.csv', index=False)
+        log(f"Saved grouped feature importances CSVs to: {output_dir}")
+
+        # Order groups: preferred order then any remaining
+        present = df_group['group'].tolist()
+        preferred = [g for g in ['cyc', 'evt', 'lag', 'road', 'other'] if g in present]
+        remaining = [g for g in present if g not in preferred]
+        groups = preferred + remaining
+
+        # Build values for nested pie
+        vals = []
+        inner_labels = []
+        for g in groups:
+            sub = df[df['group'] == g].sort_values('importance', ascending=False)
+            vals.append(sub['importance'].values)
+            inner_labels.extend(sub['feature'].tolist())
+
+        outer_vals = [v.sum() for v in vals]
+        inner_vals = np.concatenate(vals).tolist()
+
+        # Colors from tab20c, cluster per group (indices 0,4,8,12,16 as bases)
+        cmap = plt.colormaps['tab20c']
+        palette = cmap(np.linspace(0, 1, 20))
+        base_idx = [0, 4, 8, 12, 16]
+        outer_colors = [palette[base_idx[i % len(base_idx)]] for i in range(len(groups))]
+
+        inner_colors = []
+        for i, v in enumerate(vals):
+            b = base_idx[i % len(base_idx)]
+            cluster = [palette[min(b + 1, 19)], palette[min(b + 2, 19)], palette[min(b + 3, 19)]]
+            if len(v) <= len(cluster):
+                inner_colors.extend(cluster[:len(v)])
+            else:
+                repeats = (len(v) + len(cluster) - 1) // len(cluster)
+                inner_colors.extend((cluster * repeats)[:len(v)])
+
+        # Plot nested donut chart
+        fig, ax = plt.subplots(figsize=(8, 8))
+        size = 0.3
+
+        # Compute outer ring labels with percentages
+        # outer_vals already sum to 1 (normalized importances), so multiply by 100
+        outer_labels = [f"{g} ({p*100:.1f}%)" for g, p in zip(groups, outer_vals)]
+
+        # Outer ring (groups)
+        ax.pie(
+            outer_vals,
+            radius=1.0,
+            colors=outer_colors,
+            labels=outer_labels,
+            labeldistance=1.05,
+            wedgeprops=dict(width=size, edgecolor='w')
+        )
+
+        # Inner ring (features) with conditional labels based on available radius
+        inner_radius = 1.0 - size
+        show_inner_labels = inner_radius >= 0.65  # add labels only if there's enough space
+        labels_arg = inner_labels if show_inner_labels else None
+        inner_pie = ax.pie(
+            inner_vals,
+            radius=inner_radius,
+            colors=inner_colors,
+            labels=labels_arg,
+            labeldistance=0.7 if show_inner_labels else 1.1,
+            textprops=dict(fontsize=8, rotation_mode="anchor"),
+            wedgeprops=dict(width=size, edgecolor='w')
+        )
+
+        # Rotate inner labels so they radiate from the center and remain upright
+        if show_inner_labels:
+            wedges_inner = inner_pie[0]
+            texts_inner = inner_pie[1]
+            for w, t in zip(wedges_inner, texts_inner):
+                angle = (w.theta2 + w.theta1) / 2.0  # degrees
+                # Keep text upright: flip 180° if on the left half (90°..270°)
+                rotation = angle if (angle <= 90 or angle >= 270) else angle + 180
+                t.set_rotation(rotation)
+                t.set_horizontalalignment('center')
+                t.set_verticalalignment('center')
+
+        ax.set(aspect="equal", title="xgb_full Feature Importance (Group + Feature)")
+        images_dir = Path('images')
+        images_dir.mkdir(exist_ok=True)
+        png_path = images_dir / 'xgb_full_feature_importance_nested_pie.png'
+        plt.savefig(png_path, dpi=200, bbox_inches='tight')
+        plt.close(fig)
+        log(f"Saved nested pie chart PNG: {png_path}")
+
+    except Exception as e:
+        log(f"Warning: unable to compute xgb_full nested pie chart: {e}")
+
 # ===============
 # Main
 # ===============
@@ -417,7 +463,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument('--model-group', type=str, default='all', choices=['lr', 'tree', 'xgb', 'all'],
                         help='Which family of models to train.')
     parser.add_argument('--cv', type=int, default=5, help='Number of CV folds for training metrics (0 to disable).')
-    parser.add_argument('--seed', type=int, default=42, help='Random seed for reproducibility.')
+    parser.add_argument('--seed', type=int, default=18, help='Random seed for reproducibility.')
     parser.add_argument('--save-models', action='store_true', help='Save fitted models to output-dir.')
     parser.add_argument('--no-save', action='store_true', help='Do not save models even if --save-models is set.')
     parser.add_argument('--fast', action='store_true', help='Use a reduced set of models and lighter CV.')
@@ -539,6 +585,12 @@ def main(argv: Optional[List[str]] = None) -> int:
             rec['top_features'] = feature_importance_map[mname]['top_features']
     with open(results_json, 'w') as f:
         json.dump(records, f, indent=2)
+
+    # Save grouped feature importance pie for xgb_full (if available)
+    try:
+        save_xgb_full_pie(models, feats, output_dir)
+    except Exception as e:
+        log(f"Warning: failed to generate xgb_full pie chart: {e}")
 
     # Save models if requested
     if args.save_models and not args.no_save:

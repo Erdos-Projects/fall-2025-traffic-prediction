@@ -1,7 +1,7 @@
 """
 prepare_i10_training_data.py
 Author: Yanbing Wang
-Refactor: 2025-10-23
+Date: 2025-10-23
 
 A clean, modular CLI for preparing I-10 Broadway Curve training data by combining:
 - AZ511 events from a SQLite database
