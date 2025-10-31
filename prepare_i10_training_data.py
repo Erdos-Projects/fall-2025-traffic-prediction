@@ -716,7 +716,7 @@ def run_pipeline(
     X.to_parquet(out_path)
     if verbose:
         n_pairs = X.index.nunique()
-        print(f"✅ Wrote {out_path} with shape {X.shape} and {n_pairs} unique (tmc,time) pairs")
+        print(f"Wrote {out_path} with shape {X.shape} and {n_pairs} unique (tmc,time) pairs")
     return out_path
 
 
