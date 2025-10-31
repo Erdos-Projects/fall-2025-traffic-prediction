@@ -10,8 +10,8 @@ Team members: [Yanbing Wang](https://github.com/yanb514)
 - [Modeling Approach](#modeling-approach)
 - [Results](#results)
 - [Future Work](#future-work)
-- [Quick Start](#quick-start)
 - [Description of Repository](#description-of-repository)
+- [Quick Start](#quick-start)
 
 ### Introduction
 Phoenix’s Interstate 10 Broadway Curve is one of Arizona’s busiest freeway corridors, and its 11-mile segment recently underwent a four-year [reconstruction project](https://azdot.gov/i-10-broadway-curve-project) involving major lane closures between Loop 202 and I-17. *WorkZoneWatch* aims to quantify and predict the short-term delay impacts of planned roadwork and unplanned incidents along this corridor to support ADOT’s construction scheduling and traffic management decisions. Using INRIX historical speed data and AZ511 work zone and incident reports, we built an augmented dataset incorporating road geometry, traffic periodicity, and lagged travel-time features, and tested a suite of models to predict segment-level travel times. A counterfactual analysis was then performed by removing event-influenced data and event-related features to estimate “no-event” conditions, which serve as a baseline for quantifying delay caused by roadwork. Results show that planned events induce measurable but lagged delays—up to 15 seconds per mile (~3 minutes across the 11-mile segment)—roughly double routine congestion levels. Delays are most disruptive during weekday early afternoons and weekend mornings. These findings highlight opportunities to optimize work-zone scheduling and underscore the need for more complete and timely event reporting.
@@ -23,7 +23,7 @@ Phoenix’s Interstate 10 Broadway Curve is one of Arizona’s busiest freeway c
 
 Our dataset integrates **AZ511 event reports** and **INRIX historical traffic speed data** to quantify the delay impact of roadwork on the I-10 Broadway Curve corridor. These two datasets are combined through spatial and temporal matching to produce a unified, segment-level time series of traffic and event activity.
 
-- [AZ511 Events Report](https://az511.com/api/wzdx):The AZ511 Traveler Information Platform provides event-based data on scheduled work zones and unplanned incidents across Arizona through the WZDx API. Since June 2025, we have developed and maintained an automated data pipeline that collects 48,109 event records every three hours via API requests and stores them in a local SQLite database for ongoing analysis. Each record includes attributes such as location, direction, timing, and severity following the WZDx specification. To integrate this information with traffic data, we performed geolocation by mapping 474 events on I-10 using their latitude–longitude coordinates to the nearest INRIX Traffic Messaging Center (TMC) segments in both travel directions, creating a spatially aligned event dataset for the I-10 Broadway Curve corridor.
+- [AZ511 Events Report](https://az511.com/api/wzdx):The AZ511 Traveler Information Platform provides event-based data on scheduled work zones and unplanned incidents across Arizona through the WZDx API. Since June 2025, we have developed and maintained an automated data pipeline that collects 48,109 event records every three hours via API requests and stores them in a local SQLite database for ongoing analysis. Each record includes attributes such as location, direction, timing, and severity following the WZDx specification. To integrate this information with traffic data, we performed geolocation by mapping 474 events on I-10 using their latitude–longitude coordinates to the nearest INRIX Traffic Message Channel (TMC) segments in both travel directions, creating a spatially aligned event dataset for the I-10 Broadway Curve corridor.
 
 - [INRIX Historic Traffic Speed Data](https://inrix.com/products/ai-traffic/): INRIX provides minute-level observations of vehicle speed, free-flow speed, and travel time for individual TMC segments derived from floating-car GPS data. The dataset spans September 2024–October 2025 and covers 50 TMC segments along I-10. Missing observations were interpolated using temporal smoothing, and duplicate segments were removed. The time range was aligned with AZ511 event records (June–October 2025). Both event and speed data were then synchronized and aggregated into uniform one-hour intervals. This data is accessed through a paid license.
 
@@ -53,14 +53,14 @@ Upon reviewing AZ511 event records, we found that updates appear to occur in bat
 ![evt-heatmap](images/reported_accidents_dow.png)
 *Count of all events aggregated by day of week and hour of day*
 
-While some event descriptions contain detailed narratives, the EventSubType field is inconsistently defined, with vague or nonstandard entries (e.g., C34Rshoulder instead of “Crash on right shoulder,” and undefined codes such as T1018). Furthermore, the Severity field is missing in roughly 90% of records, limiting its usefulness for feature engineering. To ensure analytical consistency, we manually reclassified events into two categories—planned (e.g., work zones, closures) and unplanned (e.g., crashes, incidents)—based on their subtype descriptions.
+While some event descriptions contain detailed narratives, the EventSubType field is inconsistently defined, with vague or nonstandard entries (e.g., "C34Rshoulder" and “Crash on right shoulder” mean the same and undefined codes such as T1018). Furthermore, the Severity field is missing in roughly 90% of records, limiting its usefulness for feature engineering. To ensure analytical consistency, we manually reclassified events into two categories—planned (e.g., work zones, closures) and unplanned (e.g., crashes, incidents)—based on their subtype descriptions.
 
 ![evt-heatmap](images/severityxeventsubtype.png)
 
 *Distribution of events by subtype and reported severity*
 
 #### Feature Importance
-In addition, we explored feature importance by fitting an XGBoost model (see [Modeling Approach](#modeling-approach)). Result show that lagged travel-time (up to 3 hours) feature dominates model performance, while event-related features contribute the least, which can be another evidence that event reporting may not be in sync with the resulting traffic patterns. The ranking below is based on feature significance (p-values).
+In addition, we explored feature importance by fitting an XGBoost model (see [Modeling Approach](#modeling-approach)). Result shows that lagged travel-time (up to 3 hours) feature dominates model performance, while event-related features contribute the least, which can be another evidence that event reporting may not be in sync with the resulting traffic patterns. The ranking below is based on feature significance (p-values).
 ![fi](images/xgb_full_feature_importance_nested_pie.png)
 *Feature importance identified by XGBoost*
 
@@ -148,52 +148,19 @@ The additional delay was computed as the difference between travel times predict
 
 ![delay-how](images/extra_delay_heatmap_dow_hour.png)
 
-Further analysis reveals that planned work zones cause prolonged, lagged effects, with delays peaking 3–5 hours after work begins and reaching up to 15 sec/mile (2-3min extra delay on the 11-mile corridor), which doubles the typical daily congestion delay.
+Counterfactual analysis revealed that planned work zones cause prolonged, lagged effects, with delays peaking 3–5 hours after work begins; planned closures double normal congestion, causing 878 hours of daily delay ($5.7M/year) during recent Broadway Curve Improvement project and 1.8M annual hours ($33M/year) corridor-wide. The calculations are based on $17.9/hr average congestion cost per commuter ([INRIX Global Traffic Scorecard 2024](https://inrix.com/scorecard/)), average 300,000 traffic volume on I-10 weekday ([abs15 News](https://www.abc15.com/news/operation-safe-roads/adot-completes-construction-on-i-10-along-broadway-curve)) and 19.4M VMT/day on I-10 corridor ([State of Arizona Electric Vehicle Infrastructure Deployment Plan](https://azdot.gov/sites/default/files/2023-04/ev-infrastructure-deployment.pdf)).
 
 ![delay-how](images/diff_by_event_type_boxplot.png)
 
 ![delay-how](images/corr_evt_delay.png)
 
-These results are consistent with ADOT’s observations that off-peak closures lessen congestion but cannot eliminate it entirely. The observed lagged and residual delays also underscore the need for more complete and timely event reporting to improve predictive accuracy and mitigation planning.
+These results suggests off-peak closures or other alternative roadwork schedules could help AODT reduce congestion time by 50%, and save commuters $33M annually traveling on I-10. The observed lagged and residual delays also underscore the need for more complete and timely event reporting to improve predictive accuracy and mitigation planning.
 
 ## Future Work
 1. Integrate real-time incident feeds to address underreported and delayed event updates, such as  exploring connected vehicle data or roadside sensor information (e.g., CCTV camera).
 2. Expand the feature context by incorporating weather conditions and detailed event descriptions.
 3. Explore causal inference methods to rigorously estimate the delay impact attributable to multiple interacting factors such as work zones, demand fluctuations, and incidents.
 
-## Quick Start
-Before running the following commands, make sure to follow the project structure specified in [Description of Repository](#description-of-repository), and have 
-- `az511.db` stored in `database/`, and
-- raw INRIX data stored as `database/inrix-traffic-speed/I10-and-I17-1year/`
-
-Run the entire pipeline end-to-end using the following commands:
-
-```bash
-# 1) Prepare dataset (events + INRIX -> parquet)
-#    Output: database/i10-broadway/X_full_1h.parquet
-#    - Final feature table with MultiIndex {tmc, time_bin}
-python prepare_i10_training_data.py
-
-# 2) Train tabular baseline models (Linear/Ridge/Lasso, RF/GBRT, XGBoost)
-#    Output: models/tabular_run/
-python train_model_tabular.py --save-models
-
-# 3) Train sequence model (LSTM)
-#    Output: models/lstm_run/
-python train_model_lstm.py --save-models
-
-# 4) Train spatial-temporal model (GCN + LSTM)
-#    Output: models/gcn/gcn_lstm_i10_wb/
-python train_model_stgnn.py
-
-# 5) Compare model performance and generate evaluation figures
-#    Output: images/
-python model_comparison.py --direction WB --save-figs
-
-# 6) Run counterfactual analysis to estimate delay impact of planned events
-#    Output: images/
-python evt_impact_analysis.py
-```
 
 
 
@@ -280,12 +247,47 @@ wzdx/
 │   └── tabular_run/             # Training results for LR and Tree-based models using tabular data
 ├── notebooks/                   # EDA and adhoc scripts
 ├── src/                         # Generic helper utilities
-├── evt_impact_analysis.py       # Script to 
-├── model_comparison.py          # Script to
-├── prepare_i10_training_data.py # Script to prepare the dataset (events + INRIX -> parquet)
-├── train_model_lstm.py          # Script to train LSTM
-├── train_model_stgnn.py         # Script to train ST‑GNN
-└── train_model_tabular.py       # Script to train tabular baselines (Linear/Ridge/Lasso, RF/GBRT, XGBoost)
+├── evt_impact_analysis.py       # 6. Script to estimate delay impact due to events using counterfactual analysis
+├── model_comparison.py          # 5. Script to model all models and compute feature importance
+├── prepare_i10_training_data.py # 1. Script to prepare the dataset (events + INRIX -> parquet)
+├── train_model_lstm.py          # 3. Script to train LSTM
+├── train_model_stgnn.py         # 4. Script to train ST‑GNN
+└── train_model_tabular.py       # 2. Script to train tabular baselines (Linear/Ridge/Lasso, RF/GBRT, XGBoost)
+```
+
+
+## Quick Start
+Before running the following commands, make sure to follow the project structure specified in [Description of Repository](#description-of-repository), and have 
+- `az511.db` stored in `database/`, and
+- raw INRIX data stored as `database/inrix-traffic-speed/I10-and-I17-1year/`
+
+Run the entire pipeline end-to-end to reproduce the results using the following commands:
+
+```bash
+# 1) Prepare dataset (events + INRIX -> parquet)
+#    Output: database/i10-broadway/X_full_1h.parquet
+#    - Final feature table with MultiIndex {tmc, time_bin}
+python prepare_i10_training_data.py
+
+# 2) Train tabular baseline models (Linear/Ridge/Lasso, RF/GBRT, XGBoost)
+#    Output: models/tabular_run/
+python train_model_tabular.py --save-models
+
+# 3) Train sequence model (LSTM)
+#    Output: models/lstm_run/
+python train_model_lstm.py --save-models
+
+# 4) Train spatial-temporal model (GCN + LSTM)
+#    Output: models/gcn/gcn_lstm_i10_wb/
+python train_model_stgnn.py
+
+# 5) Compare model performance and generate evaluation figures
+#    Output: images/
+python model_comparison.py --direction WB --save-figs
+
+# 6) Run counterfactual analysis to estimate delay impact of planned events
+#    Output: images/
+python evt_impact_analysis.py
 ```
 
 <!-- ## Data Access
@@ -308,20 +310,3 @@ MIT License
 
 Copyright (c) 2025 Yanbing Wang
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in
-all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
-THE SOFTWARE.

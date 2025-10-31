@@ -13,6 +13,7 @@
 *.parquet
 database/
 models/
+dashboard/
 
 
 # Schedule runs
@@ -51,6 +52,9 @@ venv/
 ENV/
 env.bak/
 venv.bak/
+.env.template
+requirements.txt
+environment.yml
 
 # IDE
 .vscode/
@@ -71,6 +75,7 @@ Thumbs.db
 # Logs
 *.log
 _logs/
+_log/
 
 # Temporary files
 *.tmp
