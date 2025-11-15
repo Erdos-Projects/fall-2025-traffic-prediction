@@ -1,6 +1,6 @@
 # WorkZoneWatch: Predict Traffic Delay Impact from Roadwork on I-10 in Phoenix, AZ
 
-Team members: [Yanbing Wang](https://github.com/yanb514)
+Team members: [Yanbing Wang](https://github.com/yanb514), [Gurbir Arora](https://github.com/gurbir-a)
 
 
 ## Table of Content
